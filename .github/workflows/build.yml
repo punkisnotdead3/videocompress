@@ -1,0 +1,142 @@
+name: Build — macOS & Windows
+
+on:
+  push:
+    tags: ["v*"]          # triggered by:  git tag v1.0.0 && git push --tags
+  workflow_dispatch:       # or manually from the GitHub Actions tab
+
+jobs:
+  # ── macOS (runs on GitHub-hosted macOS runner) ────────────────────────────
+  build-macos:
+    name: Build macOS universal binary
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.22"
+
+      # Fyne needs: cgo + clang (pre-installed on macos-latest)
+      - name: Download Go modules
+        run: go mod download
+
+      # Download BOTH arch ffmpeg builds so we can embed each in its slice
+      - name: Download ffmpeg arm64 (Apple Silicon)
+        run: |
+          mkdir -p assets
+          curl -fsSL "https://evermeet.cx/pub/ffmpeg/ffmpeg-7.1.zip" \
+               -o /tmp/ffmpeg-arm64.zip
+          unzip -o /tmp/ffmpeg-arm64.zip ffmpeg -d /tmp/ffmpeg-arm64/
+          cp /tmp/ffmpeg-arm64/ffmpeg assets/ffmpeg-darwin-arm64
+          chmod +x assets/ffmpeg-darwin-arm64
+
+          curl -fsSL "https://evermeet.cx/pub/ffprobe/ffprobe-7.1.zip" \
+               -o /tmp/ffprobe-arm64.zip
+          unzip -o /tmp/ffprobe-arm64.zip ffprobe -d /tmp/ffprobe-arm64/
+          cp /tmp/ffprobe-arm64/ffprobe assets/ffprobe-darwin-arm64
+          chmod +x assets/ffprobe-darwin-arm64
+
+      - name: Download ffmpeg amd64 (Intel Mac)
+        run: |
+          curl -fsSL "https://evermeet.cx/pub/ffmpeg/ffmpeg-7.1-x86_64.zip" \
+               -o /tmp/ffmpeg-amd64.zip
+          unzip -o /tmp/ffmpeg-amd64.zip ffmpeg -d /tmp/ffmpeg-amd64/
+          cp /tmp/ffmpeg-amd64/ffmpeg assets/ffmpeg-darwin-amd64
+          chmod +x assets/ffmpeg-darwin-amd64
+
+          curl -fsSL "https://evermeet.cx/pub/ffprobe/ffprobe-7.1-x86_64.zip" \
+               -o /tmp/ffprobe-amd64.zip
+          unzip -o /tmp/ffprobe-amd64.zip ffprobe -d /tmp/ffprobe-amd64/
+          cp /tmp/ffprobe-amd64/ffprobe assets/ffprobe-darwin-amd64
+          chmod +x assets/ffprobe-darwin-amd64
+
+      - name: Build arm64 slice
+        run: |
+          mkdir -p dist
+          GOOS=darwin GOARCH=arm64 go build \
+            -ldflags="-s -w" \
+            -o dist/videocompress-darwin-arm64 .
+
+      - name: Build amd64 slice
+        run: |
+          GOOS=darwin GOARCH=amd64 go build \
+            -ldflags="-s -w" \
+            -o dist/videocompress-darwin-amd64 .
+
+      - name: Create universal binary (lipo)
+        run: |
+          lipo -create -output dist/videocompress-darwin-universal \
+            dist/videocompress-darwin-arm64 \
+            dist/videocompress-darwin-amd64
+
+      - name: Upload macOS artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: videocompress-macos
+          path: dist/videocompress-darwin-universal
+
+  # ── Windows (runs on GitHub-hosted Windows runner) ────────────────────────
+  build-windows:
+    name: Build Windows x64 exe
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.22"
+
+      # TDM-GCC provides the C compiler that Fyne's CGo needs on Windows
+      - name: Install TDM-GCC
+        run: choco install tdm-gcc --no-progress -y
+
+      - name: Add GCC to PATH
+        run: echo "C:\TDM-GCC-64\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+
+      - name: Download Go modules
+        run: go mod download
+
+      - name: Download ffmpeg for Windows
+        shell: pwsh
+        run: .\setup.ps1
+
+      - name: Build Windows exe
+        run: |
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          go build -ldflags="-s -w -H windowsgui" -o dist\videocompress-windows-amd64.exe .
+
+      - name: Upload Windows artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: videocompress-windows
+          path: dist\videocompress-windows-amd64.exe
+
+  # ── Create GitHub Release (only when a tag is pushed) ─────────────────────
+  release:
+    name: Create GitHub Release
+    needs: [build-macos, build-windows]
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/')
+    permissions:
+      contents: write
+    steps:
+      - name: Download macOS artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: videocompress-macos
+          path: release/
+
+      - name: Download Windows artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: videocompress-windows
+          path: release/
+
+      - name: Create release and upload binaries
+        uses: softprops/action-gh-release@v2
+        with:
+          files: release/*
+          generate_release_notes: true

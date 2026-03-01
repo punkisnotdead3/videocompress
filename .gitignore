@@ -1,0 +1,25 @@
+# Claude Code local config
+.claude/
+
+# Build output
+dist/
+
+# Downloaded ffmpeg binaries (large binary files, not committed to git)
+# Run `make setup-darwin` or `.\setup.ps1` to recreate them
+assets/ffmpeg-darwin-arm64
+assets/ffprobe-darwin-arm64
+assets/ffmpeg-darwin-amd64
+assets/ffprobe-darwin-amd64
+assets/ffmpeg-windows.exe
+assets/ffprobe-windows.exe
+
+# Go
+vendor/
+
+# macOS
+.DS_Store
+*.app/
+
+# Windows
+*.exe
+!dist/*.exe
