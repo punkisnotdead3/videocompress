@@ -55,7 +55,7 @@ func main() {
 
 	// Compression section
 	bitrateEntry := widget.NewEntry()
-	bitrateEntry.SetPlaceHolder("目标视频码率 (kbps)，如: 1000")
+	bitrateEntry.SetPlaceHolder("目标视频码率 (Mbps)，如: 8")
 
 	presetSelect := widget.NewSelect(
 		[]string{"ultrafast", "superfast", "veryfast", "faster", "fast", "medium", "slow", "slower", "veryslow"},
@@ -107,13 +107,13 @@ func main() {
 				return
 			}
 			updateInfoCard(infoGrid, infoCard, info)
-			// Suggest 50% of current video bitrate as default target
+			// Suggest 50% of current video bitrate as default target (in Mbps)
 			if info.VideoBitrate > 0 {
-				suggested := info.VideoBitrate / 2 / 1000
-				if suggested < 200 {
-					suggested = 200
+				suggestedMbps := float64(info.VideoBitrate) / 2 / 1_000_000
+				if suggestedMbps < 0.5 {
+					suggestedMbps = 0.5
 				}
-				bitrateEntry.SetText(strconv.FormatInt(suggested, 10))
+				bitrateEntry.SetText(strconv.FormatFloat(suggestedMbps, 'f', 2, 64))
 			}
 			compressBtn.Enable()
 			statusLabel.SetText("分析完成，可以开始压缩")
@@ -146,11 +146,12 @@ func main() {
 			dialog.ShowInformation("提示", "请输入目标码率", w)
 			return
 		}
-		targetKbps, err := strconv.ParseInt(targetStr, 10, 64)
-		if err != nil || targetKbps <= 0 {
-			dialog.ShowInformation("提示", "请输入有效的正整数码率 (kbps)", w)
+		targetMbps, err := strconv.ParseFloat(targetStr, 64)
+		if err != nil || targetMbps <= 0 {
+			dialog.ShowInformation("提示", "请输入有效的正数码率 (Mbps)，如: 8", w)
 			return
 		}
+		targetKbps := int64(targetMbps * 1000)
 
 		outputPath := buildOutputPath(currentVideoPath)
 		preset := presetSelect.Selected
@@ -217,8 +218,13 @@ func main() {
 		),
 	)
 
+	bitrateHint := widget.NewRichText(&widget.TextSegment{
+		Style: widget.RichTextStyle{ColorName: theme.ColorNameError},
+		Text:  "建议设置 8 Mbps",
+	})
+
 	compressionForm := container.New(layout.NewFormLayout(),
-		widget.NewLabel("目标视频码率 (kbps)"), bitrateEntry,
+		widget.NewLabel("目标视频码率 (Mbps)"), container.NewVBox(bitrateEntry, bitrateHint),
 		widget.NewLabel("编码速度预设"), presetSelect,
 		widget.NewLabel("音频处理"), audioSelect,
 	)
