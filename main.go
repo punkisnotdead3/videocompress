@@ -90,45 +90,43 @@ func main() {
 
 	// ── Button Handlers ───────────────────────────────────────────────────────
 
+	// loadVideo is shared by both the file picker and the drag-and-drop handler.
+	loadVideo := func(path string) {
+		currentVideoPath = path
+		selectedFileLabel.SetText(filepath.Base(path))
+		statusLabel.SetText("正在分析视频...")
+		infoCard.Hide()
+		bitrateEntry.SetText("")
+		compressBtn.Disable()
+		logEntry.SetText("")
+
+		go func() {
+			info, err := getVideoInfo(ffprobeBinPath, path)
+			if err != nil {
+				statusLabel.SetText("分析失败: " + err.Error())
+				return
+			}
+			updateInfoCard(infoGrid, infoCard, info)
+			// Suggest 50% of current video bitrate as default target
+			if info.VideoBitrate > 0 {
+				suggested := info.VideoBitrate / 2 / 1000
+				if suggested < 200 {
+					suggested = 200
+				}
+				bitrateEntry.SetText(strconv.FormatInt(suggested, 10))
+			}
+			compressBtn.Enable()
+			statusLabel.SetText("分析完成，可以开始压缩")
+		}()
+	}
+
 	selectBtn.OnTapped = func() {
 		fd := dialog.NewFileOpen(func(reader fyne.URIReadCloser, err error) {
 			if err != nil || reader == nil {
 				return
 			}
 			reader.Close()
-
-			// URI.Path() may have percent-encoding; use clean path
-			path := reader.URI().Path()
-			// On Windows, fyne returns paths like /C:/Users/...
-			// trim leading slash on Windows
-			path = cleanPath(path)
-
-			currentVideoPath = path
-			selectedFileLabel.SetText(filepath.Base(path))
-			statusLabel.SetText("正在分析视频...")
-			infoCard.Hide()
-			bitrateEntry.SetText("")
-			compressBtn.Disable()
-			logEntry.SetText("")
-
-			go func() {
-				info, err := getVideoInfo(ffprobeBinPath, path)
-				if err != nil {
-					statusLabel.SetText("分析失败: " + err.Error())
-					return
-				}
-				updateInfoCard(infoGrid, infoCard, info)
-				// Suggest 50% of current video bitrate as default target
-				if info.VideoBitrate > 0 {
-					suggested := info.VideoBitrate / 2 / 1000
-					if suggested < 200 {
-						suggested = 200
-					}
-					bitrateEntry.SetText(strconv.FormatInt(suggested, 10))
-				}
-				compressBtn.Enable()
-				statusLabel.SetText("分析完成，可以开始压缩")
-			}()
+			loadVideo(cleanPath(reader.URI().Path()))
 		}, w)
 
 		fd.SetFilter(storage.NewExtensionFileFilter([]string{
@@ -212,7 +210,7 @@ func main() {
 
 	// ── Layout ────────────────────────────────────────────────────────────────
 
-	fileSection := widget.NewCard("选择视频", "",
+	fileSection := widget.NewCard("选择视频", "支持从文件管理器拖拽视频文件到此窗口",
 		container.NewVBox(
 			selectedFileLabel,
 			selectBtn,
@@ -247,6 +245,21 @@ func main() {
 	)
 
 	w.SetContent(container.NewPadded(container.NewVScroll(content)))
+
+	// Accept video files dragged from the OS file manager onto the window.
+	w.SetOnDropped(func(_ fyne.Position, uris []fyne.URI) {
+		if len(uris) == 0 {
+			return
+		}
+		path := cleanPath(uris[0].Path())
+		switch strings.ToLower(filepath.Ext(path)) {
+		case ".mp4", ".mov", ".avi", ".mkv", ".wmv", ".flv", ".webm", ".m4v", ".ts", ".mts":
+			loadVideo(path)
+		default:
+			statusLabel.SetText("不支持的文件格式: " + filepath.Ext(path))
+		}
+	})
+
 	w.ShowAndRun()
 }
 
@@ -262,18 +275,29 @@ func updateInfoCard(grid *fyne.Container, card *widget.Card, info *VideoInfo) {
 		grid.Add(val)
 	}
 
+	// addRedRow displays the value in error/red color to draw attention to bitrate info.
+	addRedRow := func(label, value string) {
+		lbl := widget.NewLabelWithStyle(label, fyne.TextAlignLeading, fyne.TextStyle{Bold: true})
+		val := widget.NewRichText(&widget.TextSegment{
+			Style: widget.RichTextStyle{ColorName: theme.ColorNameError},
+			Text:  value,
+		})
+		grid.Add(lbl)
+		grid.Add(val)
+	}
+
 	addRow("格式", info.FormatName)
 	addRow("时长", formatDuration(info.Duration))
 	addRow("文件大小", formatSize(info.FileSize))
-	addRow("总码率", fmt.Sprintf("%d kbps", info.TotalBitrate/1000))
+	addRedRow("总码率", fmt.Sprintf("%.2f Mbps", float64(info.TotalBitrate)/1_000_000))
 	addRow("分辨率", fmt.Sprintf("%d × %d", info.Width, info.Height))
 	addRow("视频编码", info.VideoCodec)
-	addRow("视频码率", fmt.Sprintf("%d kbps", info.VideoBitrate/1000))
+	addRedRow("视频码率", fmt.Sprintf("%.2f Mbps", float64(info.VideoBitrate)/1_000_000))
 	addRow("帧率", fmt.Sprintf("%.3g fps", info.FPS))
 	addRow("像素格式", info.PixFmt)
 	if info.AudioCodec != "" {
 		addRow("音频编码", info.AudioCodec)
-		addRow("音频码率", fmt.Sprintf("%d kbps", info.AudioBitrate/1000))
+		addRedRow("音频码率", fmt.Sprintf("%.2f Mbps", float64(info.AudioBitrate)/1_000_000))
 		addRow("声道数", strconv.Itoa(info.AudioChannels))
 		addRow("采样率", fmt.Sprintf("%d Hz", info.SampleRate))
 	}
